@@ -44,6 +44,14 @@ locally on your machine, so they never need an API key.
 
 ## Setup
 
+**Quickest (students):**
+```bash
+cd code && bash setup.sh   # creates .venv, installs deps, scaffolds .env, downloads M0 docs
+```
+Then paste ONE API key into `code/.env` and `source code/.venv/bin/activate`.
+
+**Manual:**
+
 ```bash
 cd code
 python3 -m venv .venv && source .venv/bin/activate
