@@ -29,11 +29,12 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import OPENROUTER_BASE, check_openrouter, require_env  # noqa: E402
+from common import check_provider, require_env  # noqa: E402
 from myntra_rag import (  # noqa: E402
     MyntraHybridRetriever,
     answer_query,
     configure_settings,
+    make_client,
 )
 
 # A few realistic shopping questions that exercise both semantic and lexical
@@ -58,14 +59,12 @@ def show_dense_vs_bm25(retriever: MyntraHybridRetriever, query: str) -> None:
 
 def main() -> None:
     require_env()
-    check_openrouter()
-
-    from openai import OpenAI
+    check_provider()
 
     print("\n=== M2 — Build hybrid + rerank retriever over Myntra ===")
     configure_settings()
     retriever = MyntraHybridRetriever()
-    client = OpenAI(base_url=OPENROUTER_BASE, api_key=os.environ["OPENROUTER_API_KEY"])
+    client = make_client()
 
     # The teaching demo: dense and BM25 surface different products.
     show_dense_vs_bm25(retriever, DEMO_QUERIES[0])

@@ -15,6 +15,9 @@ retriever over a product catalogue:
 
 Both retrievers return top-10; we merge the unique candidates and rerank them
 down to top-k (default 5) before handing them to the LLM.
+
+Works with either OpenAI or OpenRouter — the provider/model/base URL come from
+common.py, which auto-detects whichever API key is set.
 """
 from __future__ import annotations
 
@@ -23,10 +26,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import (  # noqa: E402
+    API_BASE,
+    API_KEY,
     EMBED_MODEL,
     GENERATION_MODEL,
-    OPENROUTER_BASE,
     RERANK_MODEL,
+    extra_headers,
     myntra_nodes,
 )
 
@@ -35,7 +40,7 @@ _FINAL_K = 5   # how many survive the reranker and reach the LLM
 
 
 def configure_settings():
-    """Wire LlamaIndex's global embed model + LLM to OpenRouter."""
+    """Wire LlamaIndex's global embed model + LLM to the active provider."""
     from llama_index.core import Settings
     from llama_index.embeddings.huggingface import HuggingFaceEmbedding
     from llama_index.llms.openai_like import OpenAILike
@@ -43,13 +48,19 @@ def configure_settings():
     Settings.embed_model = HuggingFaceEmbedding(model_name=EMBED_MODEL)
     Settings.llm = OpenAILike(
         model=GENERATION_MODEL,
-        api_base=OPENROUTER_BASE,
-        api_key=os.environ["OPENROUTER_API_KEY"],
+        api_base=API_BASE,
+        api_key=API_KEY,
         is_chat_model=True,
         is_function_calling_model=False,
-        context_window=200000,
+        context_window=128000,
         max_tokens=1024,
     )
+
+
+def make_client():
+    """An OpenAI-compatible client pointed at the active provider."""
+    from openai import OpenAI
+    return OpenAI(base_url=API_BASE, api_key=API_KEY, default_headers=extra_headers())
 
 
 class MyntraHybridRetriever:

@@ -31,21 +31,36 @@ end-to-end Python script you can run and read top-to-bottom.
 
 Together they answer: *how do these pieces combine to build a real-world RAG?*
 
+## Works with OpenAI **or** OpenRouter
+
+You only need **one** API key. The code auto-detects which one you set:
+
+- **OpenAI key** → uses OpenAI directly (`gpt-4o-mini` by default).
+- **OpenRouter key** → uses OpenRouter (`claude-haiku-4.5` + `gemini-2.5-flash`,
+  plus free-tier models).
+
+Embeddings (`bge-small-en-v1.5`) and the reranker (`bge-reranker-base`) run
+locally on your machine, so they never need an API key.
+
 ## Setup
 
 ```bash
 cd code
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env            # then paste your OpenRouter key
+cp .env.example .env            # then paste ONE key (OpenAI or OpenRouter)
 python download_data.py         # fetch the K8s docs used by M0
 ```
 
-Get an OpenRouter key at https://openrouter.ai/keys and put it in `code/.env`:
+Edit `code/.env` and set exactly one of:
 
 ```
-OPENROUTER_API_KEY=sk-or-v1-...
+OPENAI_API_KEY=sk-...            # https://platform.openai.com/api-keys
+# or
+OPENROUTER_API_KEY=sk-or-v1-...  # https://openrouter.ai/keys
 ```
+
+If you set both, add `LLM_PROVIDER=openai` (or `openrouter`) to pick one.
 
 ## Run
 
@@ -68,7 +83,7 @@ python m3_myntra_chatbot.py "warm waterproof boots for a winter trek"
 
 | File | What |
 |---|---|
-| `scripts/common.py` | Shared config, data loaders, RAGAS eval helper |
+| `scripts/common.py` | Provider auto-detection, config, data loaders, RAGAS eval helper |
 | `scripts/m0_naive.py` | Naive RAG + baseline eval (K8s) |
 | `scripts/myntra_rag.py` | Shared Myntra hybrid retriever (dense + BM25 + reranker) |
 | `scripts/m2_hybrid.py` | Hybrid RAG demo over the Myntra catalogue |
@@ -77,12 +92,15 @@ python m3_myntra_chatbot.py "warm waterproof boots for a winter trek"
 | `goldset.json` | Golden questions for M0's RAGAS eval |
 | `Myntra_300_prod_catalogue.csv` | ~299 products (name + description) for M2/M3 |
 
-## Models (swap in `scripts/common.py`)
+## Models (defaults — override via env in `.env`)
 
-- **Generation:** `anthropic/claude-haiku-4.5` (answers)
-- **Judge:** `google/gemini-2.5-flash` (RAGAS — never grade with the generator)
-- **Embeddings:** `BAAI/bge-small-en-v1.5` (384-dim, free)
-- **Reranker:** `BAAI/bge-reranker-base` (cross-encoder, runs on CPU)
+| Role | OpenAI | OpenRouter |
+|---|---|---|
+| Generation | `gpt-4o-mini` | `anthropic/claude-haiku-4.5` |
+| RAGAS judge | `gpt-4o-mini` | `google/gemini-2.5-flash` |
+| Embeddings | `BAAI/bge-small-en-v1.5` (local) | same |
+| Reranker | `BAAI/bge-reranker-base` (local) | same |
 
-All LLM calls go through [OpenRouter](https://openrouter.ai), so one API key
-gets you Claude, Gemini, GPT, and free-tier models.
+> Tip: for the cleanest RAGAS scores, use a *different* model to judge than to
+> generate (OpenRouter does this by default). On OpenAI you can set
+> `JUDGE_MODEL=gpt-4o` to decorrelate the judge from the generator.

@@ -23,6 +23,8 @@ THE ARCHITECTURE IDEA:
     products, or many facets of one topic), multiple targeted queries recall
     relevant items that a single query would miss.
 
+Works with either OpenAI or OpenRouter (auto-detected in common.py).
+
 Run the UI:
     streamlit run scripts/m3_myntra_chatbot.py
 
@@ -36,12 +38,12 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import GENERATION_MODEL, OPENROUTER_BASE  # noqa: E402
+from common import GENERATION_MODEL  # noqa: E402
 from myntra_rag import (  # noqa: E402
     MyntraHybridRetriever,
     answer_query,
     configure_settings,
-    format_context,
+    make_client,
 )
 
 N_SUBQUERIES = 3
@@ -54,11 +56,6 @@ DECOMPOSE_PROMPT = (
     "sentence). Return ONLY a JSON array of {n} strings, nothing else.\n\n"
     "Customer request: {query}"
 )
-
-
-def make_client():
-    from openai import OpenAI
-    return OpenAI(base_url=OPENROUTER_BASE, api_key=os.environ["OPENROUTER_API_KEY"])
 
 
 def decompose(client, query: str, n: int = N_SUBQUERIES) -> list[str]:
@@ -78,7 +75,7 @@ def decompose(client, query: str, n: int = N_SUBQUERIES) -> list[str]:
         subs = [str(s).strip() for s in subs if str(s).strip()]
     except Exception:
         subs = []
-    # Always include the original query; pad/truncate to n sub-queries.
+    # Always fall back to the original query; truncate to n sub-queries.
     if not subs:
         subs = [query]
     return subs[:n]
@@ -111,9 +108,9 @@ def run_pipeline(client, retriever, query: str):
 # CLI fallback — `python m3_myntra_chatbot.py "your question"`
 # ---------------------------------------------------------------------------
 def _cli(query: str) -> None:
-    from common import check_openrouter, require_env
+    from common import check_provider, require_env
     require_env()
-    check_openrouter()
+    check_provider()
     configure_settings()
     retriever = MyntraHybridRetriever()
     client = make_client()

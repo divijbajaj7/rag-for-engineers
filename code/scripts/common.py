@@ -1,12 +1,24 @@
 """Shared utilities for the M0 / M2 / M3 modules.
 
 Single source of truth for:
+  • Provider selection — works with EITHER an OpenAI key OR an OpenRouter key
   • Model selection (swap models in one place)
   • Data loaders (K8s docs for M0, the Myntra catalogue for M2/M3)
   • The RAGAS eval helper used by M0 (faithfulness + answer_relevancy)
   • Result persistence (scripts/eval_results.json)
 
 You don't run this file directly — the module scripts import from it.
+
+PROVIDER AUTO-DETECTION
+-----------------------
+Set ONE of these in code/.env:
+    OPENAI_API_KEY=sk-...          # uses OpenAI directly (gpt-4o-mini, etc.)
+    OPENROUTER_API_KEY=sk-or-v1-.. # uses OpenRouter (Claude, Gemini, free models)
+
+If both are set, LLM_PROVIDER decides (default: openrouter). You can also force
+it: LLM_PROVIDER=openai. Model names and the API base URL are chosen to match
+the provider automatically. Embeddings + reranker are local HuggingFace models,
+so they need no API key either way.
 """
 from __future__ import annotations
 
@@ -27,18 +39,66 @@ GOLDSET_PATH = ROOT / "goldset.json"                   # M0 eval questions
 MYNTRA_CSV = ROOT / "Myntra_300_prod_catalogue.csv"    # M2 / M3 corpus
 RESULTS_PATH = ROOT / "scripts" / "eval_results.json"
 
-# Pulls OPENROUTER_API_KEY from code/.env if present.
+# Pulls OPENAI_API_KEY / OPENROUTER_API_KEY from code/.env if present.
 load_dotenv(ROOT / ".env")
 
 # ---------------------------------------------------------------------------
-# Models — single source of truth. Swap any line to change provider/model.
-# To go fully free-tier, point GENERATION_MODEL at a :free OpenRouter model.
+# Provider resolution — OpenAI or OpenRouter, whichever key is present.
 # ---------------------------------------------------------------------------
+OPENAI_BASE = "https://api.openai.com/v1"
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-GENERATION_MODEL = "anthropic/claude-haiku-4.5"   # answers user queries (all modules)
-JUDGE_MODEL = "google/gemini-2.5-flash"           # RAGAS judge — decorrelated from generator
-EMBED_MODEL = "BAAI/bge-small-en-v1.5"            # 384-dim dense embeddings, free, fast
-RERANK_MODEL = "BAAI/bge-reranker-base"           # cross-encoder reranker, ~280MB, CPU
+
+
+def _resolve_provider() -> tuple[str, str, str | None]:
+    """Return (provider, api_base, api_key) based on env.
+
+    Priority:
+      1. Explicit LLM_PROVIDER=openai|openrouter
+      2. Whichever key is set (OpenRouter wins if both are present)
+    """
+    forced = os.environ.get("LLM_PROVIDER", "").strip().lower()
+    or_key = os.environ.get("OPENROUTER_API_KEY")
+    oa_key = os.environ.get("OPENAI_API_KEY")
+
+    if forced == "openai":
+        provider = "openai"
+    elif forced == "openrouter":
+        provider = "openrouter"
+    elif or_key:
+        provider = "openrouter"
+    elif oa_key:
+        provider = "openai"
+    else:
+        provider = "openrouter"  # default; require_env() will raise a clear error
+
+    if provider == "openai":
+        return "openai", OPENAI_BASE, oa_key
+    return "openrouter", OPENROUTER_BASE, or_key
+
+
+PROVIDER, API_BASE, API_KEY = _resolve_provider()
+
+# ---------------------------------------------------------------------------
+# Models — chosen per provider, each overridable via env.
+# To go fully free-tier on OpenRouter, set GENERATION_MODEL to a ":free" model.
+# ---------------------------------------------------------------------------
+if PROVIDER == "openai":
+    GENERATION_MODEL = os.environ.get("GENERATION_MODEL", "gpt-4o-mini")   # answers
+    JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gpt-4o-mini")             # RAGAS judge
+else:
+    GENERATION_MODEL = os.environ.get("GENERATION_MODEL", "anthropic/claude-haiku-4.5")
+    JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "google/gemini-2.5-flash")
+
+EMBED_MODEL = "BAAI/bge-small-en-v1.5"   # 384-dim dense embeddings, local, free
+RERANK_MODEL = "BAAI/bge-reranker-base"  # cross-encoder reranker, local, CPU
+
+
+def extra_headers() -> dict:
+    """OpenRouter likes attribution headers; OpenAI ignores them."""
+    if PROVIDER == "openrouter":
+        return {"HTTP-Referer": "https://localhost/", "X-Title": "RAG for Engineers"}
+    return {}
+
 
 # ---------------------------------------------------------------------------
 # M0 canonical test queries (Kubernetes corpus).
@@ -54,20 +114,21 @@ TEST_QUERIES = [Q1, Q2, Q3]
 # Pre-flight checks
 # ---------------------------------------------------------------------------
 def require_env() -> None:
-    """Fail fast if the API key isn't set, before anything expensive runs."""
-    if not os.environ.get("OPENROUTER_API_KEY"):
+    """Fail fast if no API key is set, before anything expensive runs."""
+    if not API_KEY:
         raise SystemExit(
-            "OPENROUTER_API_KEY missing. Add it to code/.env:\n"
-            "    echo 'OPENROUTER_API_KEY=sk-or-v1-...' > code/.env"
+            "No LLM API key found. Add ONE of these to code/.env:\n"
+            "    OPENAI_API_KEY=sk-...            # for OpenAI\n"
+            "    OPENROUTER_API_KEY=sk-or-v1-...  # for OpenRouter"
         )
 
 
-def check_openrouter() -> None:
-    """Round-trip one tiny request to confirm the gateway is reachable."""
+def check_provider() -> None:
+    """Round-trip one tiny request to confirm the provider is reachable."""
     from openai import OpenAI
     try:
         OpenAI(
-            base_url=OPENROUTER_BASE, api_key=os.environ["OPENROUTER_API_KEY"]
+            base_url=API_BASE, api_key=API_KEY, default_headers=extra_headers()
         ).chat.completions.create(
             model=JUDGE_MODEL,
             messages=[{"role": "user", "content": "Reply with exactly: OK"}],
@@ -76,11 +137,14 @@ def check_openrouter() -> None:
         )
     except Exception as e:
         raise SystemExit(
-            f"OpenRouter unreachable: {type(e).__name__}: {e}\n"
-            "Confirm OPENROUTER_API_KEY and try:\n"
-            "    curl -sS -o /dev/null -w '%{http_code}' https://openrouter.ai/api/v1/models"
+            f"{PROVIDER} unreachable: {type(e).__name__}: {e}\n"
+            "Confirm your API key in code/.env and that the account has credit."
         )
-    print("OpenRouter: OK")
+    print(f"Provider OK: {PROVIDER} ({API_BASE})")
+
+
+# Backward-compatible alias (older imports called this name).
+check_openrouter = check_provider
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +225,8 @@ def print_scoreboard() -> None:
 # ---------------------------------------------------------------------------
 # RAGAS eval (used by M0) — faithfulness + answer_relevancy.
 # Per-sample async to avoid RAGAS 0.4's executor recursion bug.
-# Generator = Haiku, judge = Gemini Flash (never grade with the generator).
+# On OpenRouter the judge (Gemini) is decorrelated from the generator (Haiku).
+# On OpenAI both default to gpt-4o-mini; override JUDGE_MODEL to decorrelate.
 # ---------------------------------------------------------------------------
 async def evaluate_async(query_fn, label: str, sample: int | None = None) -> dict:
     """Score a query function against the goldset with RAGAS.
@@ -181,12 +246,9 @@ async def evaluate_async(query_fn, label: str, sample: int | None = None) -> dic
     from ragas.metrics.collections import AnswerRelevancy, Faithfulness
 
     client = AsyncOpenAI(
-        base_url=OPENROUTER_BASE,
-        api_key=os.environ["OPENROUTER_API_KEY"],
-        default_headers={
-            "HTTP-Referer": "https://localhost/",
-            "X-Title": "RAG for Engineers",
-        },
+        base_url=API_BASE,
+        api_key=API_KEY,
+        default_headers=extra_headers(),
     )
     llm = llm_factory(
         model=JUDGE_MODEL, provider="openai", client=client, max_tokens=8192

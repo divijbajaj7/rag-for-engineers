@@ -30,12 +30,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import (  # noqa: E402
+    API_BASE,
+    API_KEY,
     DATA_DIR,
     EMBED_MODEL,
     GENERATION_MODEL,
-    OPENROUTER_BASE,
     TEST_QUERIES,
-    check_openrouter,
+    check_provider,
     evaluate_async,
     print_scoreboard,
     require_env,
@@ -56,14 +57,15 @@ def build_naive_engine():
     # bge-small-en-v1.5: 384-dim, free, fast. Small index, fast cosine search.
     Settings.embed_model = HuggingFaceEmbedding(model_name=EMBED_MODEL)
 
-    # OpenAILike points LlamaIndex at any OpenAI-compatible endpoint (OpenRouter).
+    # OpenAILike points LlamaIndex at any OpenAI-compatible endpoint
+    # (OpenAI or OpenRouter — resolved in common.py).
     Settings.llm = OpenAILike(
         model=GENERATION_MODEL,
-        api_base=OPENROUTER_BASE,
-        api_key=os.environ["OPENROUTER_API_KEY"],
+        api_base=API_BASE,
+        api_key=API_KEY,
         is_chat_model=True,
         is_function_calling_model=False,
-        context_window=200000,
+        context_window=128000,
         max_tokens=1024,
     )
 
@@ -87,7 +89,7 @@ def build_naive_engine():
 
 async def main() -> None:
     require_env()
-    check_openrouter()
+    check_provider()
 
     print("\n=== M0 — Build naive RAG ===")
     _, engine = build_naive_engine()
