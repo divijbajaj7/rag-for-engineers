@@ -1,0 +1,27 @@
+# Secrets — never commit API keys
+.env
+.env.local
+.env.*.local
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Script-generated state / caches
+code/scripts/eval_results.json
+.cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*.log
